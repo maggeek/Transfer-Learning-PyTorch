@@ -5,111 +5,132 @@ import seaborn as sn
 import pandas as pd
 import matplotlib.pyplot as plt
 import torchvision.datasets as datasets
+from torchvision import transforms
 from torchvision.utils import save_image
 from torchvision.utils import make_grid
 from config import args
 import torch
+import pickle
+from lime import lime_image
+from skimage.segmentation import mark_boundaries
 
 
-# load dataset
-def load_dataset()
-    if args.data == 'CIFAR10':
-        trainset = datasets.CIFAR10(root="cifar10/train",
-                                    train=True,
-                                    download=True,
-                                    transform=transform)
-        validset = datasets.CIFAR10(root="cifar10/test",
-                                    train=False,
-                                    download=True,
-                                    transform=transform)
-        meta = pickle.load(open('cifar10/train/cifar-10-batches-py/batches.meta', 'rb'))
-    elif args.data == 'CIFAR100':
-        trainset = datasets.CIFAR100(root="cifar100/train",
-                                    train=True,
-                                    download=True,
-                                    transform=transform)
-        validset = datasets.CIFAR100(root="cifar100/test",
-                                    train=False,
-                                    download=True,
-                                    transform=transform)
-        meta = pickle.load(open('cifar100/train/cifar-100-batches-py/batches.meta', 'rb'))
-    elif args.data == 'MNIST':
-        trainset = datasets.MNIST(root="mnist/train",
-                                    train=True,
-                                    download=True,
-                                    transform=transform)
-        validset = datasets.MNIST(root="mnist/test",
-                                    train=False,
-                                    download=True,
-                                    transform=transform)
-        meta = pickle.load(open('mnist/train/mnist-batches-py/batches.meta', 'rb'))
-    elif args.data == 'MNIST':
-        trainset = datasets.MNIST(root="mnist/train",
-                                    train=True,
-                                    download=True,
-                                    transform=transform)
-        validset = datasets.MNIST(root="mnist/test",
-                                    train=False,
-                                    download=True,
-                                    transform=transform)
-        meta = pickle.load(open('cifar100/train/cifar-100-batches-py/batches.meta', 'rb'))
+def load_dataset():
+    """
+    Load chosen benchmark dataset
+    :return: trainloader - object to iterate in batches through the training set
+             validloader - object to iterate in batches through the validation set
+             class_names - class names for the dataset
+    """
 
-    return trainset, validset, meta
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225]
+        )])
+
+    print(args.data)
+    dataset = str(args.data).split('.')[3].split("'")[0]
+    print(dataset)
+    trainset = args.data(root='datasets/{}/train'.format(dataset),
+                         train=True,
+                         download=True,
+                         transform=transform)
+    validset = args.data(root='datasets/{}/test'.format(dataset),
+                                train=False,
+                                download=True,
+                                transform=transform)
+
+    if dataset == 'CIFAR10':
+        meta = pickle.load(open('datasets/cifar10/train/cifar-10-batches-py/batches.meta', 'rb'))
+        class_names = meta['label_names']
+    elif dataset == 'CIFAR100':
+        meta = pickle.load(open('datasets/cifar100/train/cifar-100-python/meta', 'rb'))
+        class_names = meta['label_names']
+    elif dataset == 'MNIST':
+        class_names = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+    # MNIST extended with handwritten letters
+    # elif dataset == 'EMNIST':
+    # # Kuzushiji MNIST
+    # elif dataset == 'KMNIST':
+    # # Fashion MNIST
+    # elif dataset == 'Fashion-MNIST':
+
+    trainloader = torch.utils.data.DataLoader(trainset,
+                                              batch_size=args.batch_size,
+                                              shuffle=True,
+                                              num_workers=args.workers)
+    validloader = torch.utils.data.DataLoader(validset,
+                                              batch_size=args.batch_size,
+                                              shuffle=False,
+                                              num_workers=args.workers)
+    return trainloader, validloader, class_names
 
 
-# save losses
 def save_loss(epoch, batch, how_many_batches, loss, acc, name):
+    """
+    Save loss and accuracy for each batch in text file
+    :param epoch: current epoch
+    :param batch: current batch
+    :param how_many_batches: number of batches
+    :param loss: loss value
+    :param acc: accuracy value
+    :param name: file name
+    """
     file = open('{}/loss_{}.txt'.format(args.folder_name, name), 'a')
     file.write(
         "[Epoch %d/%d] [Batch %d/%d] [Loss: %f] [Accuracy: %f]" % (epoch, args.n_epochs, batch, how_many_batches, loss, acc) + "\n")
     file.close()
 
 
-# save losses plots
 def save_plot(epoch, loss, name):
-    x = list(range(0, epoch + 1))
-    plt.plot(x, loss, '-b', label='{} loss'.format(name))
+    """
+    Save plots for loss or accuracy over epochs
+    :param epoch: current epoch
+    :param loss:
+    :param name:
+    :return:
+    """
+    x = list(range(0, epoch))
+    plt.plot(x, loss, '-b', label=name)
     plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.title('{} loss'.format(name))
+    plt.ylabel(name)
+    plt.title(name)
     plt.legend(loc='upper left')
-    plt.savefig('{}/loss_{}.png'.format(args.folder_name, name), bbox_inches='tight')
+    plt.savefig('{}/{}.png'.format(args.folder_name, name), bbox_inches='tight')
     plt.close()
 
 
-def accuracy(output, target, topk=(1,)):
-    """Computes the precision@k for the specified values of k"""
-    maxk = max(topk)
-    batch_size = target.size(0)
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
-
-
-# save confusion matrix
 def save_cm(cm, class_names, epoch):
-    print(cm)
-    print(cm.shape)
+    """
+    Save confusion matrix
+    :param cm:
+    :param class_names:
+    :param epoch:
+    :return:
+    """
     df_cm = pd.DataFrame(cm, index=[i for i in class_names],
                          columns=[i for i in class_names])
     plt.figure(figsize=(25, 25))
-    sn.heatmap(df_cm, annot=True)
-    plt.savefig('confusion_matrix'+ str(epoch) +'.jpg')
+    sn.heatmap(df_cm, annot=True, fmt='g')
+    plt.savefig('{}/confusion_matrix_epoch'.format(args.folder_name) + str(epoch) + '.jpg')
     plt.close()
 
 
-# save images with labels
 def save_images(class_names, imgs, predicted, epoch, n_row):
-    print(predicted)
-    print(class_names)
-    print(len(imgs))
-    print(imgs[0])
+    """
+    Save images with labels
+###    Used for both real and predicted images
+    :param class_names:
+    :param imgs:
+    :param predicted:
+    :param epoch:
+    :param n_row:
+    :return:
+    """
     mini = torch.min(imgs)
     maxi = torch.max(imgs)
     images = (imgs - mini) / (maxi - mini)
@@ -121,8 +142,14 @@ def save_images(class_names, imgs, predicted, epoch, n_row):
         arr = img.numpy()
         arr_im = np.moveaxis(arr, 0, 2)
         ax.imshow(arr_im)
-        # make bigger font here
-        ax.set_title(str(label))
+        ax.set_title(str(label), fontsize=60)
         # get rid of axes etc
         plt.show()
-    plt.savefig('predictions' + str(epoch) + '.jpg')
+    plt.savefig('{}/predictions_epoch'.format(args.folder_name) + str(epoch) + '.jpg')
+    plt.close()
+
+
+#def explain_predictions():
+#    explainer = lime_image.LimeImageExplainer()
+    # Hide color is the color for a superpixel turned OFF. Alternatively, if it is NONE, the superpixel will be replaced by the average of its pixels
+    explanation = explainer.explain_instance(image, predict_fn, top_labels=5, hide_color=0, num_samples=1000)

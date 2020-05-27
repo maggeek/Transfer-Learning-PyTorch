@@ -3,5 +3,6 @@ __pycache__
 cifar10
 cifar100
 mnist
+datasets
 results*
-readme.txt
+*.txt
